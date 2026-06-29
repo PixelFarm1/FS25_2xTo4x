@@ -10,15 +10,16 @@ export default function App() {
   const [targetSize,     setTargetSize]     = useState(4096)
   const [placement,      setPlacement]      = useState('center')
   const [fillMode,       setFillMode]       = useState('flat')
-  const [fillElevation,  setFillElevation]  = useState(0)
-  const [heightScale,    setHeightScale]    = useState(300)
+  const [fillPixelValue, setFillPixelValue] = useState(0)
   const [unitsPerPixel,  setUnitsPerPixel]  = useState(2)
   const [lang,           setLang]           = useState('en')
 
-  const [logs,       setLogs]       = useState([])
-  const [isRunning,  setIsRunning]  = useState(false)
-  const [zipBuffer,  setZipBuffer]  = useState(null)
-  const [srcDims,    setSrcDims]    = useState(null) // { w, h } of uploaded PNG
+  const [logs,         setLogs]         = useState([])
+  const [isRunning,    setIsRunning]    = useState(false)
+  const [zipBuffer,    setZipBuffer]    = useState(null)
+  const [srcDims,      setSrcDims]      = useState(null)   // { w, h }
+  const [srcBitmap,    setSrcBitmap]    = useState(null)   // ImageBitmap of uploaded file
+  const [outputBitmap, setOutputBitmap] = useState(null)   // ImageBitmap of generated output
 
   const workerRef = useRef(null)
   const t = translations[lang]
@@ -28,14 +29,20 @@ export default function App() {
   useEffect(() => {
     workerRef.current = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })
 
-    workerRef.current.onmessage = (e) => {
-      const { type, message, zipBuffer: zb } = e.data
+    workerRef.current.onmessage = async (e) => {
+      const { type, message, zipBuffer: zb, outPngBuffer } = e.data
       if (type === 'LOG') {
         appendLog(message)
       } else if (type === 'DONE') {
         setZipBuffer(zb)
         setIsRunning(false)
         appendLog('✓ Done — ready to download.')
+        // Create a preview bitmap from the output PNG
+        if (outPngBuffer) {
+          const blob = new Blob([outPngBuffer], { type: 'image/png' })
+          const bmp  = await createImageBitmap(blob)
+          setOutputBitmap(bmp)
+        }
       } else if (type === 'ERROR') {
         appendLog(`ERROR: ${message}`)
         setIsRunning(false)
@@ -50,28 +57,47 @@ export default function App() {
     return () => workerRef.current?.terminate()
   }, [appendLog])
 
-  // Read source image dimensions whenever file changes
+  // When file changes: read dimensions and create a preview bitmap
   useEffect(() => {
-    if (!file) { setSrcDims(null); return }
+    if (!srcBitmap) return
+    return () => srcBitmap.close?.()
+  }, [srcBitmap])
+
+  useEffect(() => {
+    if (!outputBitmap) return
+    return () => outputBitmap.close?.()
+  }, [outputBitmap])
+
+  useEffect(() => {
+    if (!file) {
+      setSrcDims(null)
+      setSrcBitmap(null)
+      setOutputBitmap(null)
+      return
+    }
+    // Parse PNG dimensions from IHDR (bytes 16–23)
     file.arrayBuffer().then(buf => {
-      // Parse PNG dimensions from IHDR (bytes 16-23)
       const view = new DataView(buf)
-      const w = view.getUint32(16)
-      const h = view.getUint32(20)
-      setSrcDims({ w, h })
+      setSrcDims({ w: view.getUint32(16), h: view.getUint32(20) })
     })
+    // Create bitmap for visual preview (browser normalises 16-bit → 8-bit display)
+    createImageBitmap(file).then(bmp => setSrcBitmap(bmp))
+    // Clear any previous output when a new file is loaded
+    setOutputBitmap(null)
+    setZipBuffer(null)
   }, [file])
 
   async function handleRun() {
     if (!file || isRunning) return
     setIsRunning(true)
     setZipBuffer(null)
+    setOutputBitmap(null)
     setLogs([])
     appendLog('Starting...')
 
     const imageBuffer = await file.arrayBuffer()
     workerRef.current.postMessage(
-      { type: 'RUN', payload: { imageBuffer, targetSize, placement, fillMode, fillElevation, heightScale, unitsPerPixel } },
+      { type: 'RUN', payload: { imageBuffer, targetSize, placement, fillMode, fillPixelValue, unitsPerPixel } },
       [imageBuffer]
     )
   }
@@ -129,8 +155,7 @@ export default function App() {
             targetSize={targetSize} setTargetSize={setTargetSize}
             placement={placement} setPlacement={setPlacement}
             fillMode={fillMode} setFillMode={setFillMode}
-            fillElevation={fillElevation} setFillElevation={setFillElevation}
-            heightScale={heightScale} setHeightScale={setHeightScale}
+            fillPixelValue={fillPixelValue} setFillPixelValue={setFillPixelValue}
             unitsPerPixel={unitsPerPixel} setUnitsPerPixel={setUnitsPerPixel}
             onRun={handleRun}
             onDownload={handleDownload}
@@ -142,10 +167,13 @@ export default function App() {
 
         <div className="w-1/2 flex flex-col min-h-0">
           <PreviewCanvas
+            srcBitmap={srcBitmap}
+            outputBitmap={outputBitmap}
             srcDims={srcDims}
             targetSize={targetSize}
             placement={placement}
             unitsPerPixel={unitsPerPixel}
+            isRunning={isRunning}
             t={t}
           />
         </div>

@@ -1,29 +1,32 @@
 import { useEffect, useRef } from 'react'
 import { Badge } from './ui/badge.jsx'
 
-// Colours matching Watermelon UI palette
-const COLOR_OUTPUT_BG = '#e8e0d8'   // warm muted — new empty area
-const COLOR_SOURCE    = '#c8d8b8'   // soft green — existing DEM
-const COLOR_BORDER    = '#E63946'   // primary red — source boundary
-const COLOR_LABEL     = '#1A120B'   // foreground
+const COLOR_NEW_AREA = '#d8d0c8'   // muted warm — unfilled territory
+const COLOR_BORDER   = '#E63946'   // primary red — source boundary
+const COLOR_LABEL_BG = 'rgba(253,248,245,0.85)'
+const PADDING        = 32
 
 function getOffset(placement, srcW, srcH, outW, outH) {
   switch (placement) {
     case 'center':       return { ox: Math.round((outW - srcW) / 2), oy: Math.round((outH - srcH) / 2) }
-    case 'top-left':     return { ox: 0, oy: 0 }
-    case 'top-right':    return { ox: outW - srcW, oy: 0 }
-    case 'bottom-left':  return { ox: 0, oy: outH - srcH }
+    case 'top-left':     return { ox: 0,          oy: 0           }
+    case 'top-right':    return { ox: outW - srcW, oy: 0           }
+    case 'bottom-left':  return { ox: 0,          oy: outH - srcH }
     case 'bottom-right': return { ox: outW - srcW, oy: outH - srcH }
-    default:             return { ox: 0, oy: 0 }
+    default:             return { ox: 0,          oy: 0           }
   }
 }
 
-export default function PreviewCanvas({ srcDims, targetSize, placement, unitsPerPixel, t }) {
-  const canvasRef = useRef(null)
+export default function PreviewCanvas({
+  srcBitmap, outputBitmap,
+  srcDims, targetSize, placement, unitsPerPixel,
+  isRunning, t,
+}) {
+  const canvasRef   = useRef(null)
   const containerRef = useRef(null)
 
   useEffect(() => {
-    const canvas = canvasRef.current
+    const canvas    = canvasRef.current
     const container = containerRef.current
     if (!canvas || !container) return
 
@@ -33,46 +36,58 @@ export default function PreviewCanvas({ srcDims, targetSize, placement, unitsPer
     canvas.height = ch
     ctx.clearRect(0, 0, cw, ch)
 
-    if (!srcDims) {
-      // Empty state
-      ctx.fillStyle = '#c8c0b8'
+    // ── State 1: no file uploaded ──────────────────────────────────────────
+    if (!srcBitmap && !outputBitmap) {
+      ctx.fillStyle = '#a0988e'
       ctx.font = '13px Inter, sans-serif'
       ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
       ctx.fillText(t.previewEmpty, cw / 2, ch / 2)
       return
     }
 
     const outPx = Math.round(targetSize / unitsPerPixel) + 1
-    const padding = 32
-
-    const scale = Math.min(
-      (cw - padding * 2) / outPx,
-      (ch - padding * 2) / outPx
+    const scale  = Math.min(
+      (cw - PADDING * 2) / outPx,
+      (ch - PADDING * 2) / outPx
     )
-
-    const drawW = outPx * scale
-    const drawH = outPx * scale
+    const drawW  = outPx * scale
+    const drawH  = outPx * scale
     const startX = Math.round((cw - drawW) / 2)
     const startY = Math.round((ch - drawH) / 2)
 
-    // Output canvas background
-    ctx.fillStyle = COLOR_OUTPUT_BG
+    // ── State 3: output ready — show generated image ───────────────────────
+    if (outputBitmap) {
+      ctx.drawImage(outputBitmap, startX, startY, drawW, drawH)
+
+      // Outer border
+      ctx.strokeStyle = '#b0a898'
+      ctx.lineWidth = 1
+      ctx.strokeRect(startX, startY, drawW, drawH)
+
+      // Label
+      drawLabel(ctx, `Output: ${outputBitmap.width}×${outputBitmap.height} px`, startX + 6, startY + 6)
+      return
+    }
+
+    // ── State 2: file uploaded — show source in position ───────────────────
+    // Background (new/empty area)
+    ctx.fillStyle = COLOR_NEW_AREA
     ctx.fillRect(startX, startY, drawW, drawH)
 
-    // Source DEM rect
+    // Source DEM at the chosen placement
     const { ox, oy } = getOffset(placement, srcDims.w, srcDims.h, outPx, outPx)
     const srcDrawX = startX + ox * scale
     const srcDrawY = startY + oy * scale
     const srcDrawW = srcDims.w * scale
     const srcDrawH = srcDims.h * scale
 
-    ctx.fillStyle = COLOR_SOURCE
-    ctx.fillRect(srcDrawX, srcDrawY, srcDrawW, srcDrawH)
+    ctx.drawImage(srcBitmap, srcDrawX, srcDrawY, srcDrawW, srcDrawH)
 
     // Red border around source
     ctx.strokeStyle = COLOR_BORDER
     ctx.lineWidth = 2
-    ctx.strokeRect(srcDrawX, srcDrawY, srcDrawW, srcDrawH)
+    ctx.strokeRect(srcDrawX + 1, srcDrawY + 1, srcDrawW - 2, srcDrawH - 2)
 
     // Outer border
     ctx.strokeStyle = '#b0a898'
@@ -80,21 +95,21 @@ export default function PreviewCanvas({ srcDims, targetSize, placement, unitsPer
     ctx.strokeRect(startX, startY, drawW, drawH)
 
     // Labels
-    ctx.fillStyle = COLOR_LABEL
-    ctx.font = 'bold 11px Inter, sans-serif'
-    ctx.textAlign = 'left'
+    drawLabel(ctx, `Output canvas: ${outPx}×${outPx} px  (${targetSize}m)`, startX + 6, startY + 6)
+    drawLabel(ctx, `Source: ${srcDims.w}×${srcDims.h} px`, srcDrawX + 4, srcDrawY + 4, COLOR_BORDER)
 
-    const outSizeLabel = `${outPx}×${outPx} px  (${targetSize}m)`
-    ctx.fillText(outSizeLabel, startX + 6, startY + 14)
+    // Running spinner overlay
+    if (isRunning) {
+      ctx.fillStyle = 'rgba(253,248,245,0.55)'
+      ctx.fillRect(startX, startY, drawW, drawH)
+      ctx.fillStyle = '#1A120B'
+      ctx.font = 'bold 13px Inter, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('Processing…', startX + drawW / 2, startY + drawH / 2)
+    }
 
-    ctx.fillStyle = '#1B4332'
-    ctx.font = '10px Inter, sans-serif'
-    const srcLabel = `Source: ${srcDims.w}×${srcDims.h} px`
-    // Place label near the source rect, avoiding clipping
-    const labelY = Math.max(srcDrawY + 14, startY + 28)
-    ctx.fillText(srcLabel, Math.max(srcDrawX + 4, startX + 4), labelY)
-
-  }, [srcDims, targetSize, placement, unitsPerPixel, t])
+  }, [srcBitmap, outputBitmap, srcDims, targetSize, placement, unitsPerPixel, isRunning, t])
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -111,4 +126,16 @@ export default function PreviewCanvas({ srcDims, targetSize, placement, unitsPer
 
     </div>
   )
+}
+
+function drawLabel(ctx, text, x, y, color = '#1A120B') {
+  ctx.font = 'bold 11px Inter, sans-serif'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'top'
+  const metrics = ctx.measureText(text)
+  const pad = 3
+  ctx.fillStyle = COLOR_LABEL_BG
+  ctx.fillRect(x - pad, y - pad, metrics.width + pad * 2, 14 + pad * 2)
+  ctx.fillStyle = color
+  ctx.fillText(text, x, y)
 }

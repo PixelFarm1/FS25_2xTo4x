@@ -21,8 +21,7 @@ export default function ControlsPanel({
   targetSize, setTargetSize,
   placement, setPlacement,
   fillMode, setFillMode,
-  fillElevation, setFillElevation,
-  heightScale, setHeightScale,
+  fillPixelValue, setFillPixelValue,
   unitsPerPixel, setUnitsPerPixel,
   onRun, onDownload,
   isRunning, hasResult,
@@ -119,25 +118,15 @@ export default function ControlsPanel({
 
         {fillMode === 'flat' && (
           <NumberInput
-            label={t.fillElevation}
-            tooltip={t.fillElevTooltip}
-            value={fillElevation}
-            onChange={setFillElevation}
+            label={t.fillPixelValue}
+            tooltip={t.fillPixelTooltip}
+            value={fillPixelValue}
+            onChange={setFillPixelValue}
             min={0}
+            max={65535}
             step={1}
           />
         )}
-      </section>
-
-      {/* Height scale */}
-      <section>
-        <SectionLabel tooltip={t.heightScaleTooltip}>{t.heightScale}</SectionLabel>
-        <NumberInput
-          value={heightScale}
-          onChange={setHeightScale}
-          min={1}
-          step={10}
-        />
       </section>
 
       {/* Units per pixel */}
@@ -192,13 +181,14 @@ function SectionLabel({ children, tooltip }) {
   )
 }
 
-function NumberInput({ label, tooltip, value, onChange, min = 0, step = 1 }) {
+function NumberInput({ label, tooltip, value, onChange, min = 0, max, step = 1 }) {
   return (
     <div className="flex items-center gap-2" title={tooltip}>
       {label && <span className="text-[13px] text-foreground flex-1">{label}</span>}
       <input
         type="number"
         min={min}
+        max={max}
         step={step}
         value={value}
         onChange={e => {
